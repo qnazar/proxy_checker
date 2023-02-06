@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 import datetime
 
 import requests
+from requests import Response
 from requests.exceptions import ProxyError, ConnectTimeout
 from urllib3.exceptions import ConnectTimeoutError, ProxyError as PrEr, MaxRetryError
 
@@ -19,10 +20,10 @@ class ProxyChecker:
         self.direct_responses = [requests.get(RESOURCE) for RESOURCE in RESOURCES]
         logger.info(f'Made direct requests. Responses: {self.direct_responses}.')
 
-    def run(self):
-        """Main function to run the checker"""
+    def run(self, workers=8) -> None:
+        """Main method to run the checker. Workers argument controls how many threads will be used."""
         logger.debug('Check started')
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
             executor.map(self._perform_check, self.proxy_list)
         logger.debug('Check complete')
         logger.debug('Saving results')
@@ -30,8 +31,8 @@ class ProxyChecker:
         self.session.close()
         logger.debug('Results are saved')
 
-    def _perform_check(self, proxy: Proxy):
-        """"""
+    def _perform_check(self, proxy: Proxy) -> None:
+        """Controls the workflow and logic of the checks"""
         logger.info(f'Checking {proxy.ip}:{proxy.port}')
         is_alive = self._is_alive(proxy)
         proxy.last_checked = datetime.datetime.now()
@@ -39,11 +40,13 @@ class ProxyChecker:
             direct_response, proxy_response = self._get_ping(proxy)
             self._is_clean(proxy, direct_response, proxy_response)
 
-    def _load_proxies(self):
+    def _load_proxies(self) -> list:
+        """Loading proxies from database."""
         logger.debug('Proxies are loaded')
         return self.session.query(Proxy).all()
 
-    def _is_alive(self, proxy: Proxy):
+    def _is_alive(self, proxy: Proxy) -> bool:
+        """Sends requests to url through proxy and expects to get a response"""
         proxy_str = f'{proxy.ip}:{proxy.port}'
         proxies = {'http': proxy_str, 'https': proxy_str}
         try:
@@ -61,7 +64,9 @@ class ProxyChecker:
             proxy.availability = proxy.check_passed / proxy.total_checks
             return proxy.is_alive
 
-    def _get_ping(self, proxy: Proxy):
+    def _get_ping(self, proxy: Proxy) -> tuple[Response, Response]:
+        """Calculating the average latency.
+        :returns direct and proxified response for further check without requests"""
         pings = []
         proxy_str = f'{proxy.ip}:{proxy.port}'
         proxies = {'http': proxy_str, 'https': proxy_str}
@@ -82,7 +87,8 @@ class ProxyChecker:
         proxy.ping = avg_ping.total_seconds()
         return direct_response, proxy_response
 
-    def _is_clean(self, proxy: Proxy, direct_response, proxy_response):
+    def _is_clean(self, proxy: Proxy, direct_response: Response, proxy_response: Response) -> None:
+        """Compares content of direct and proxified response."""
         proxy._is_clean = direct_response.text == proxy_response.text
 
 
